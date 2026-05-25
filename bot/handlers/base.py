@@ -27,7 +27,7 @@ def get_main_keyboard():
 async def cmd_start(message: Message):
     """Обработчик команд /start и /help"""
     # Регистрируем пользователя
-    register_user(
+    await register_user(
         user_id=message.from_user.id,
         username=message.from_user.username,
         first_name=message.from_user.first_name,
@@ -63,8 +63,7 @@ async def handle_my_subs_button(message: Message):
     from .subscriptions import cmd_my_subscriptions
     await cmd_my_subscriptions(
         user_id=message.from_user.id,
-        chat_id=message.chat.id,
-        bot=message.bot
+        chat_id=message.chat.id
     )
 
 async def handle_help_button(message: Message):
@@ -81,7 +80,7 @@ async def help_menu_callback(callback: types.CallbackQuery):
         
         # Регистрируем пользователя
         from bot.database import register_user
-        register_user(
+        await register_user(
             user_id=user_id,
             username=callback.from_user.username,
             first_name=callback.from_user.first_name,
@@ -141,8 +140,8 @@ async def mysubs_menu_callback(callback: types.CallbackQuery):
         from bot.handlers.subscriptions import cmd_my_subscriptions
         await cmd_my_subscriptions(
             user_id=callback.from_user.id,
-            chat_id=callback.message.chat.id,
-            bot=callback.bot
+            chat_id=callback.message.chat.id
+            # Убираем bot
         )
         await callback.answer()
     except Exception as e:
@@ -167,7 +166,7 @@ async def stats_menu_callback(callback: types.CallbackQuery):
 async def cmd_help(message: Message):
     """Обработчик команды /help - показывает все доступные команды"""
     # Регистрируем пользователя
-    register_user(
+    await register_user(
         user_id=message.from_user.id,
         username=message.from_user.username,
         first_name=message.from_user.first_name,
@@ -217,7 +216,7 @@ async def help_menu_callback(callback: types.CallbackQuery):
         logging.info(f"Обработка help_menu_callback: {callback.data}")
         
         # Регистрируем пользователя
-        register_user(
+        await register_user(
             user_id=callback.from_user.id,
             username=callback.from_user.username,
             first_name=callback.from_user.first_name,
@@ -278,7 +277,7 @@ async def main_menu_callback(callback: types.CallbackQuery):
     """Обработчик кнопки выхода в главное меню"""
     try:
         # Регистрируем пользователя
-        register_user(
+        await register_user(
             user_id=callback.from_user.id,
             username=callback.from_user.username,
             first_name=callback.from_user.first_name,

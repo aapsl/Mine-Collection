@@ -9,5 +9,6 @@ setup(
         "python-dotenv==1.0.0",
         "rapidfuzz==3.0.0",
         "redis==4.5.4",
+        "asyncpg==0.28.0",
     ],
 )

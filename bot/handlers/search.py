@@ -19,7 +19,8 @@ async def search_mods(message: Message):
     
     await message.chat.do("typing")
     
-    mods = search_mods_cached(search_query, limit=100)
+    # Используем кэшированную версию поиска - ДОБАВЛЯЕМ AWAIT
+    mods = await search_mods_cached(search_query, limit=100)
     
     logging.info(f"Результаты поиска для '{search_query}': {len(mods)} модов")
     
@@ -30,7 +31,8 @@ async def search_mods(message: Message):
             "Попробуй:\n"
             "• Проверить написание\n"
             "• Использовать английское название\n"
-            "• Искать более популярные моды"
+            "• Искать более популярные моды\n"
+            "• Убедиться, что база данных заполнена (запустите парсер)"
         )
         return
     

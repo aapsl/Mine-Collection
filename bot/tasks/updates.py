@@ -1,98 +1,117 @@
 import asyncio
 import logging
-import sqlite3
-from datetime import datetime
+from aiogram import types
 
-from bot.database import get_mod_versions, get_subscriptions_for_mod, update_subscription_version, remove_subscription
-from bot.config import DB_PATH
+from bot.database import get_pool, get_mod_versions, update_subscription_version
 
 async def check_mod_updates(bot):
-    """Фоновая задача для проверки обновлений модов"""
-    try:
-        while True:
-            try:
-                logging.info("Начинаем проверку обновлений модов...")
+    """Фоновая проверка обновлений с кнопками"""
+    # Ждём запуска бота
+    await asyncio.sleep(30)
+    
+    while True:
+        try:
+            pool = get_pool()
+            if pool is None:
+                await asyncio.sleep(60)
+                continue
             
+            logging.info("🔍 Проверка обновлений...")
+            
+            async with pool.acquire() as conn:
                 # Получаем все моды с подписками
-                with sqlite3.connect(DB_PATH, timeout=30) as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT DISTINCT mod_id FROM subscriptions")
-                    mods_with_subs = [row[0] for row in cursor.fetchall()]
+                mods = await conn.fetch("SELECT DISTINCT mod_id FROM subscriptions")
             
-                logging.info(f"Проверяем обновления для {len(mods_with_subs)} модов с подписками")
-            
-                for mod_id in mods_with_subs:
-                    try:
-                        # Получаем информацию о моде
-                        with sqlite3.connect(DB_PATH, timeout=30) as conn:
-                            conn.row_factory = sqlite3.Row
-                            cursor = conn.cursor()
-                            cursor.execute("SELECT * FROM mods WHERE id = ?", (mod_id,))
-                            mod_data = cursor.fetchone()
-                    
-                        if not mod_data:
-                            continue
-                    
-                        versions = get_mod_versions(mod_id)
-                        if not versions:
-                            continue
-                    
-                        latest_version = versions[0]['version_number']
-                    
-                        # Получаем последнюю известную версию из подписки
-                        with sqlite3.connect(DB_PATH, timeout=30) as conn:
-                            cursor = conn.cursor()
-                            cursor.execute("SELECT last_version FROM subscriptions WHERE mod_id = ? LIMIT 1", (mod_id,))
-                            last_known_version_row = cursor.fetchone()
-                            last_known_version = last_known_version_row[0] if last_known_version_row else None
-                    
-                        if latest_version and last_known_version is not None and latest_version != last_known_version:
-                            logging.info(f"Обнаружено обновление для мода {mod_data['title']}: {last_known_version} -> {latest_version}")
-                        
-                            # Обновляем версию в подписках
-                            update_subscription_version(mod_id, latest_version)
-                            
-                            # Получаем всех подписчиков
-                            subscribers = get_subscriptions_for_mod(mod_id)
-                        
-                            for sub in subscribers:
-                                try:
-                                    user_id = sub['user_id']
-                                    message_text = (
-                                        f"🔄 <b>Обновление мода!</b>\n\n"
-                                        f"Мод <b>{mod_data['title']}</b> обновлен:\n"
-                                        f"• Было: {last_known_version or 'Неизвестно'}\n"
-                                        f"• Стало: {latest_version}\n\n"
-                                        f"<a href=\"https://modrinth.com/mod/{mod_data['slug']}\">Страница мода на Modrinth</a>"
-                                    )
-                                
-                                    await bot.send_message(
-                                        chat_id=user_id,
-                                        text=message_text,
-                                        parse_mode="HTML",
-                                        disable_web_page_preview=True
-                                    )
-                                
-                                    await asyncio.sleep(0.1)
-                                
-                                except Exception as e:
-                                    logging.error(f"Ошибка при отправке уведомления пользователю {sub['user_id']}: {e}")
-                                    if "bot was blocked" in str(e).lower():
-                                        remove_subscription(sub['user_id'], mod_id)
+            for row in mods:
+                mod_id = row['mod_id']
                 
-                    except Exception as e:
-                        logging.error(f"Ошибка при проверке обновлений для мода {mod_id}: {e}")
+                try:
+                    # Получаем информацию о моде
+                    async with pool.acquire() as conn:
+                        mod = await conn.fetchrow(
+                            "SELECT id, title, slug, downloads FROM mods WHERE id = $1", 
+                            mod_id
+                        )
+                    
+                    if not mod:
                         continue
+                    
+                    # Получаем последнюю версию
+                    versions = await get_mod_versions(mod_id)
+                    if not versions:
+                        continue
+                    
+                    latest_version = versions[0]['version_number']
+                    
+                    # Получаем сохранённую версию из подписки
+                    async with pool.acquire() as conn:
+                        old_version = await conn.fetchval(
+                            "SELECT last_version FROM subscriptions WHERE mod_id = $1 LIMIT 1",
+                            mod_id
+                        )
+                    
+                    # Если есть обновление
+                    if old_version and old_version != latest_version:
+                        logging.info(f"🔄 Обновление {mod['title']}: {old_version} → {latest_version}")
+                        
+                        # Обновляем версию в подписках
+                        await update_subscription_version(mod_id, latest_version)
+                        
+                        # Получаем всех подписчиков
+                        async with pool.acquire() as conn:
+                            subscribers = await conn.fetch(
+                                "SELECT user_id FROM subscriptions WHERE mod_id = $1",
+                                mod_id
+                            )
+                        
+                        # Создаём клавиатуру с кнопками
+                        keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
+                            [
+                                types.InlineKeyboardButton(
+                                    text="📦 Открыть в боте",
+                                    callback_data=f"mod:{mod['id']}:update:{mod['title']}"
+                                ),
+                                types.InlineKeyboardButton(
+                                    text="🌐 На Modrinth",
+                                    url=f"https://modrinth.com/mod/{mod['slug']}"
+                                )
+                            ]
+                        ])
+                        
+                        # Формируем сообщение
+                        message_text = (
+                            f"🔄 <b>Обновление мода!</b>\n\n"
+                            f"<b>{mod['title']}</b>\n"
+                            f"📥 Загрузок: {mod['downloads']:,}\n\n"
+                            f"<b>Новая версия:</b> {latest_version}\n"
+                            f"<b>Было:</b> {old_version}\n\n"
+                            f"⬇️ Нажми на кнопку, чтобы посмотреть мод"
+                        )
+                        
+                        # Отправляем уведомления всем подписчикам
+                        for sub in subscribers:
+                            try:
+                                await bot.send_message(
+                                    chat_id=sub['user_id'],
+                                    text=message_text,
+                                    parse_mode="HTML",
+                                    reply_markup=keyboard,
+                                    disable_web_page_preview=True
+                                )
+                                await asyncio.sleep(0.1)  # Защита от флуда
+                            except Exception as e:
+                                logging.error(f"Не удалось отправить пользователю {sub['user_id']}: {e}")
+                
+                except Exception as e:
+                    logging.error(f"Ошибка при проверке мода {mod_id}: {e}")
+                    continue
             
-                logging.info("Проверка обновлений завершена. Следующая проверка через 1 час.")
-                await asyncio.sleep(3600)
-            except asyncio.CancelledError:
-                logging.info("Задача проверки обновлений остановлена по запросу")
-                break
-            except Exception as e:
-                logging.error(f"Ошибка в фоновой задаче проверки обновлений: {e}")
-                await asyncio.sleep(300)
-    except asyncio.CancelledError:
-        logging.info("Задача проверки обновлений полностью остановлена")
-    except Exception as e:
-        logging.error(f"Неожиданная ошибка в фоновой задаче: {e}")
+            # Ждём час до следующей проверки
+            await asyncio.sleep(3600)
+            
+        except asyncio.CancelledError:
+            logging.info("⏹️ Задача проверки обновлений остановлена")
+            break
+        except Exception as e:
+            logging.error(f"❌ Ошибка в фоновой задаче: {e}")
+            await asyncio.sleep(300)

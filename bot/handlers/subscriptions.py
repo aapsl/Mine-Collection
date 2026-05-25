@@ -1,27 +1,23 @@
 import logging
-import sqlite3
-from aiogram import types
+from aiogram import Bot, types
 from aiogram.filters import Command
 from aiogram.types import Message
 
-from bot.config import ADMIN_IDS, DB_PATH
-from bot.database import get_all_mod_loaders, get_mod_versions, get_user_subscriptions, remove_subscription, add_subscription
-from bot.keyboards import create_subscriptions_keyboard, create_version_buttons
+from bot.config import ADMIN_IDS
+from bot.database import get_all_mod_loaders, get_mod_versions, get_user_subscriptions, remove_subscription, add_subscription, pool
+from bot.keyboards import create_subscriptions_keyboard, create_version_buttons  # ИСПРАВЛЕННЫЙ ИМПОРТ
 from bot.utils import format_mod_message
 
-async def cmd_my_subscriptions(user_id: int, chat_id: int, bot):
+async def cmd_my_subscriptions(user_id: int, chat_id: int):
     """Показывает подписки пользователя с интерактивными кнопками"""
     
-    # Правильная проверка: сравниваем ID пользователя с ID бота
-    if user_id == bot.id:
-        logging.warning("Бот запросил свои собственные подписки")
-        await bot.send_message(chat_id, "Бот не может иметь подписки на моды")
-        return
-    
+    # Убираем проверку на bot.id, так как бот не может вызывать эту команду
     try:
-        subscriptions = get_user_subscriptions(user_id)
+        subscriptions = await get_user_subscriptions(user_id)
         
         if not subscriptions:
+            from aiogram import Bot
+            bot = Bot.get_current()
             await bot.send_message(
                 chat_id,
                 "📋 У вас пока нет подписок на обновления модов.\n\n"
@@ -33,6 +29,8 @@ async def cmd_my_subscriptions(user_id: int, chat_id: int, bot):
     
     except Exception as e:
         logging.error(f"Ошибка в cmd_my_subscriptions: {e}")
+        from aiogram import Bot
+        bot = Bot.get_current()
         await bot.send_message(chat_id, "❌ Произошла ошибка при получении списка подписок")
         return
     
@@ -40,9 +38,11 @@ async def cmd_my_subscriptions(user_id: int, chat_id: int, bot):
     subs_text = "📋 <b>Ваши подписки на обновления модов:</b>\n\n"
     subs_text += "Выберите мод для управления подпиской:\n\n"
     
-    # Создаем клавиатуру с кнопками
+    # Создаем клавиатуру с кнопками - УБИРАЕМ ОТНОСИТЕЛЬНЫЙ ИМПОРТ
     keyboard = create_subscriptions_keyboard(subscriptions, 0)
     
+    from aiogram import Bot
+    bot = Bot.get_current()
     await bot.send_message(chat_id, text=subs_text, parse_mode="HTML", reply_markup=keyboard)
 
 async def cmd_unsubscribe(message: Message):
@@ -55,7 +55,7 @@ async def cmd_unsubscribe(message: Message):
             await message.answer("❌ Укажите ID мода для отписки. Например: /unsubscribe_abc123")
             return
         
-        success = remove_subscription(user_id, mod_id)
+        success = await remove_subscription(user_id, mod_id)
         
         if success:
             await message.answer("✅ Вы успешно отписались от обновлений мода")
@@ -75,21 +75,19 @@ async def cmd_debug_subs(user_id: int, chat_id: int, bot):
 
     # Показываем информацию о подписках пользователя
     try:
-        with sqlite3.connect(DB_PATH, timeout=30) as conn:
-            cursor = conn.cursor()
-            
+        async with pool.acquire() as conn:
             # Получаем все подписки пользователя
-            cursor.execute("SELECT * FROM subscriptions WHERE user_id = ?", (user_id,))
-            subscriptions = cursor.fetchall()
+            rows = await conn.fetch("SELECT * FROM subscriptions WHERE user_id = $1", user_id)
+            subscriptions = [dict(row) for row in rows]
             
             # Получаем информацию о модах
-            cursor.execute("""
+            rows = await conn.fetch("""
                 SELECT s.mod_id, m.title, s.mod_name 
                 FROM subscriptions s 
                 LEFT JOIN mods m ON s.mod_id = m.id 
-                WHERE s.user_id = ?
-            """, (user_id,))
-            mods_info = cursor.fetchall()
+                WHERE s.user_id = $1
+            """, user_id)
+            mods_info = [dict(row) for row in rows]
             
             debug_text = (
                 f"🔧 <b>Отладочная информация о подписках:</b>\n\n"
@@ -98,14 +96,14 @@ async def cmd_debug_subs(user_id: int, chat_id: int, bot):
                 f"<b>Детальная информация:</b>\n"
             )
             
-            for i, (mod_id, mod_title, mod_name) in enumerate(mods_info, 1):
-                debug_text += f"{i}. ID: {mod_id}\n"
-                debug_text += f"   Название в mods: {mod_title or 'Нет'}\n"
-                debug_text += f"   Название в подписке: {mod_name}\n\n"
+            for i, mod_info in enumerate(mods_info, 1):
+                debug_text += f"{i}. ID: {mod_info['mod_id']}\n"
+                debug_text += f"   Название в mods: {mod_info['title'] or 'Нет'}\n"
+                debug_text += f"   Название в подписке: {mod_info['mod_name']}\n\n"
             
             await bot.send_message(chat_id, debug_text, parse_mode="HTML")
             
-    except sqlite3.Error as e:
+    except Exception as e:
         logging.error(f"Ошибка при получении отладочной информации: {e}")
         await bot.send_message(chat_id, "❌ Ошибка при получении информации о подписках")
 
@@ -123,7 +121,6 @@ async def subscribe_callback(callback: types.CallbackQuery, bot):
         mod_page = int(parts[3])
         version_page = int(parts[4])
         
-        # Остальной код без изменений...
         user_id = callback.from_user.id
         
         # Проверяем, что это не бот
@@ -132,11 +129,8 @@ async def subscribe_callback(callback: types.CallbackQuery, bot):
             await callback.answer("Ошибка: неверный пользователь")
             return
         
-        with sqlite3.connect(DB_PATH, timeout=30) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute("SELECT title FROM mods WHERE id = ?", (mod_id,))
-            mod_row = cursor.fetchone()
+        async with pool.acquire() as conn:
+            mod_row = await conn.fetchrow("SELECT title FROM mods WHERE id = $1", mod_id)
         
         if not mod_row:
             await callback.answer("Мод не найден")
@@ -145,34 +139,38 @@ async def subscribe_callback(callback: types.CallbackQuery, bot):
         # Преобразуем Row в словарь
         mod_data = dict(mod_row)
         
-        versions = get_mod_versions(mod_id)
+        versions = await get_mod_versions(mod_id)
         last_version = versions[0]['version_number'] if versions else None
         
-        success = add_subscription(user_id, mod_id, mod_data['title'], last_version)
+        success = await add_subscription(user_id, mod_id, mod_data['title'], last_version)
         
         if success:
             # Получаем обновленные данные для сообщения
-            with sqlite3.connect(DB_PATH, timeout=30) as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                cursor.execute("SELECT * FROM mods WHERE id = ?", (mod_id,))
-                mod_row = cursor.fetchone()
+            async with pool.acquire() as conn:
+                mod_row = await conn.fetchrow("SELECT * FROM mods WHERE id = $1", mod_id)
             
             # Преобразуем Row в словарь
             mod_data = dict(mod_row)
             
-            versions = get_mod_versions(mod_id)
-            all_loaders = get_all_mod_loaders(mod_id)
+            versions = await get_mod_versions(mod_id)
+            all_loaders = await get_all_mod_loaders(mod_id)
             mod_message = format_mod_message(mod_data, versions[0], all_loaders)
             
             # Проверяем подписку для отображения статуса
-            user_subs = get_user_subscriptions(user_id)
+            user_subs = await get_user_subscriptions(user_id)
             is_subscribed = any(sub['mod_id'] == mod_id for sub in user_subs)
             if is_subscribed:
                 mod_message += "\n\n🔔 Вы подписаны на обновления этого мода"
             
-            keyboard = create_version_buttons(mod_id, versions, search_query, mod_page, version_page, user_id, bot.id)
+            # ДОБАВЛЯЕМ AWAIT ПЕРЕД create_version_buttons
+            keyboard = await create_version_buttons(mod_id, versions, search_query, mod_page, version_page, user_id, bot.id)
             
+            # Проверяем, что клавиатура создана корректно
+            if not keyboard or not hasattr(keyboard, 'inline_keyboard'):
+                logging.error("❌ Клавиатура не создана или неверный формат")
+                await callback.answer("Ошибка при создании клавиатуры")
+                return
+                
             await callback.message.edit_text(mod_message, parse_mode="HTML", reply_markup=keyboard)
             await callback.answer(f"Вы подписались на обновления {mod_data['title']}")
         else:
@@ -199,31 +197,26 @@ async def unsubscribe_callback(callback: types.CallbackQuery, bot):
         # Получаем название мода для сообщения
         mod_name = "Неизвестный мод"
         try:
-            with sqlite3.connect(DB_PATH, timeout=30) as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT title FROM mods WHERE id = ?", (mod_id,))
-                result = cursor.fetchone()
+            async with pool.acquire() as conn:
+                result = await conn.fetchrow("SELECT title FROM mods WHERE id = $1", mod_id)
                 if result:
-                    mod_name = result[0]
-        except sqlite3.Error as e:
+                    mod_name = result['title']
+        except Exception as e:
             logging.error(f"Ошибка при получении названия мода: {e}")
         
         # Удаляем подписку
-        success = remove_subscription(callback.from_user.id, mod_id)
+        success = await remove_subscription(callback.from_user.id, mod_id)
         
         if success:
             # Обновляем сообщение с информацией о моде
-            with sqlite3.connect(DB_PATH, timeout=30) as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                cursor.execute("SELECT * FROM mods WHERE id = ?", (mod_id,))
-                mod_row = cursor.fetchone()
+            async with pool.acquire() as conn:
+                mod_row = await conn.fetchrow("SELECT * FROM mods WHERE id = $1", mod_id)
             
             # Преобразуем Row в словарь
             mod_data = dict(mod_row)
             
-            versions = get_mod_versions(mod_id)
-            all_loaders = get_all_mod_loaders(mod_id)
+            versions = await get_mod_versions(mod_id)
+            all_loaders = await get_all_mod_loaders(mod_id)
             mod_message = format_mod_message(mod_data, versions[0], all_loaders)
             
             # Добавляем сообщение об отписке
@@ -241,7 +234,7 @@ async def unsubscribe_callback(callback: types.CallbackQuery, bot):
         logging.error(f"Ошибка в unsubscribe_callback: {e}")
         await callback.answer("Произошла ошибка при отписке")
 
-async def subs_show_callback(callback: types.CallbackQuery, bot):
+async def subs_show_callback(callback: types.CallbackQuery, bot: Bot):
     """Показывает информацию о моде из списка подписок"""
     try:
         _, mod_id, page = callback.data.split(":")
@@ -249,28 +242,25 @@ async def subs_show_callback(callback: types.CallbackQuery, bot):
         user_id = callback.from_user.id
         
         # Получаем информацию о моде
-        with sqlite3.connect(DB_PATH, timeout=30) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM mods WHERE id = ?", (mod_id,))
-            mod_row = cursor.fetchone()
+        async with pool.acquire() as conn:
+            mod_row = await conn.fetchrow("SELECT * FROM mods WHERE id = $1", mod_id)
         
         if not mod_row:
             await callback.answer("Мод не найден")
             return
         
-        # Преобразуем Row в словарь
+        # Преобразуем Row объект в словарь
         mod_data = dict(mod_row)
         
         # Получаем все версии мода
-        versions = get_mod_versions(mod_id)
+        versions = await get_mod_versions(mod_id)
         
         if not versions:
             await callback.answer("Для этого мода нет версий")
             return
         
         # Получаем все загрузчики для мода
-        all_loaders = get_all_mod_loaders(mod_id)
+        all_loaders = await get_all_mod_loaders(mod_id)
         
         # Формируем сообщение
         mod_message = format_mod_message(mod_data, versions[0], all_loaders)
@@ -320,17 +310,15 @@ async def subs_unsubscribe_callback(callback: types.CallbackQuery, bot):
         # Получаем название мода для сообщения
         mod_name = "Неизвестный мод"
         try:
-            with sqlite3.connect(DB_PATH, timeout=30) as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT title FROM mods WHERE id = ?", (mod_id,))
-                result = cursor.fetchone()
+            async with pool.acquire() as conn:
+                result = await conn.fetchrow("SELECT title FROM mods WHERE id = $1", mod_id)
                 if result:
-                    mod_name = result[0]
-        except sqlite3.Error as e:
+                    mod_name = result['title']
+        except Exception as e:
             logging.error(f"Ошибка при получении названия мода: {e}")
         
         # Удаляем подписку
-        success = remove_subscription(user_id, mod_id)
+        success = await remove_subscription(user_id, mod_id)
         
         if success:
             # Показываем сообщение об успешной отписке
@@ -359,8 +347,8 @@ async def subs_back_callback(callback: types.CallbackQuery):
         from .subscriptions import cmd_my_subscriptions
         await cmd_my_subscriptions(
             user_id=callback.from_user.id,
-            chat_id=callback.message.chat.id,
-            bot=callback.bot
+            chat_id=callback.message.chat.id
+            # Убираем bot
         )
         await callback.answer()
     except Exception as e:
@@ -373,8 +361,7 @@ async def subs_refresh_callback(callback: types.CallbackQuery):
         from .subscriptions import cmd_my_subscriptions
         await cmd_my_subscriptions(
             user_id=callback.from_user.id,
-            chat_id=callback.message.chat.id,
-            bot=callback.bot
+            chat_id=callback.message.chat.id
         )
         await callback.answer("✅ Список обновлен")
     except Exception as e:
@@ -388,7 +375,7 @@ async def subs_page_callback(callback: types.CallbackQuery, bot):
         page = int(page)
         user_id = callback.from_user.id
         
-        subscriptions = get_user_subscriptions(user_id)
+        subscriptions = await get_user_subscriptions(user_id)
         
         if not subscriptions:
             await callback.answer("Нет подписок")
@@ -407,3 +394,23 @@ async def subs_page_callback(callback: types.CallbackQuery, bot):
     except Exception as e:
         logging.error(f"Ошибка в subs_page_callback: {e}")
         await callback.answer("Произошла ошибка")
+
+# Функции-обертки для регистрации в диспетчере
+async def cmd_my_subscriptions_wrapper(message: Message):
+    """Обертка для команды /mysubs"""
+    await cmd_my_subscriptions(message.from_user.id, message.chat.id)
+
+async def cmd_debug_subs_wrapper(message: Message):
+    """Обертка для команды /debug_subs"""
+    # Проверяем права администратора
+    from bot.config import ADMIN_IDS
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("❌ У вас нет прав для выполнения этой команды")
+        return
+    
+    # Создаем временный объект bot для передачи
+    class FakeBot:
+        def __init__(self, real_bot):
+            self.send_message = real_bot.send_message
+    
+    await cmd_debug_subs(message.from_user.id, message.chat.id, message.bot)
