@@ -5,3 +5,5 @@
 *.log
 .env
 __pycache__/*
+*.txt
+for_ai.py
