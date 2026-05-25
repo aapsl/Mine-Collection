@@ -356,9 +356,8 @@ Mine-Collection/
 ⭐ Поставьте звезду репозиторию, если проект вам полезен! ⭐
 </div> 
 
+### requirements.txt
 ```markdown
-
-# requirements.txt
 
 aiogram==3.0.0b7
 python-dotenv==1.0.0
@@ -367,10 +366,10 @@ redis==4.5.4
 asyncpg==0.28.0
 aiohttp==3.8.4
 tenacity==8.2.0
+```
 
-markdown
-
-# .env.example
+### .env.example
+```markdown
 
 # Telegram Bot Configuration
 BOT_TOKEN=your_bot_token_here
@@ -396,3 +395,4 @@ LOG_LEVEL=INFO
 
 # Paths
 MOD_ALIASES_PATH=mod_aliases.json
+```
