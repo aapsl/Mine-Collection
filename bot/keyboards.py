@@ -3,10 +3,12 @@ import re
 from aiogram import types
 
 def sanitize(text: str, max_len: int = 50) -> str:
+    """Очищает текст для callback_data"""
     if not text:
         return ""
     text = re.sub(r'[^a-zA-Z0-9_\-]', '', text)
     return text[:max_len]
+
 
 def mods_keyboard(mods: list, page: int, query: str, page_size: int = 10) -> types.InlineKeyboardMarkup:
     """Клавиатура списка модов"""
@@ -40,7 +42,7 @@ def mods_keyboard(mods: list, page: int, query: str, page_size: int = 10) -> typ
         ))
     if end < total:
         nav.append(types.InlineKeyboardButton(
-            text="Вперед ➡️",
+            text="Вперёд ➡️",
             callback_data=f"page:{page+1}:{safe_query}"
         ))
     if nav:
@@ -55,120 +57,180 @@ def mods_keyboard(mods: list, page: int, query: str, page_size: int = 10) -> typ
     
     return kb
 
-def versions_keyboard(mod_id: str, versions: list, query: str, mod_page: int, 
-                       ver_page: int = 0, is_subscribed: bool = False) -> types.InlineKeyboardMarkup:
-    """Клавиатура выбора версии"""
+
+def mod_details_keyboard(mod_id: str, query: str, mod_page: int, is_subscribed: bool = False, total_versions: int = 0) -> types.InlineKeyboardMarkup:
+    """Клавиатура для карточки мода (без версий)"""
     kb = types.InlineKeyboardMarkup(inline_keyboard=[])
     safe_query = sanitize(query)
     
-    total = len(versions)
+    # Кнопки действий
+    action_row = []
     
-    # Если нет версий, показываем сообщение
-    if total == 0:
-        kb.inline_keyboard.append([
-            types.InlineKeyboardButton(
-                text="❌ Нет доступных версий",
-                callback_data="noop"
-            )
-        ])
-        kb.inline_keyboard.append([
-            types.InlineKeyboardButton(
-                text="⬅️ Назад",
-                callback_data=f"back:{safe_query}:{mod_page}"
-            )
-        ])
-        return kb
+    # Кнопка скачивания последней версии
+    action_row.append(types.InlineKeyboardButton(
+        text="📥 Скачать",
+        callback_data=f"download_latest:{mod_id}"
+    ))
     
-    per_page = 10
-    start = ver_page * per_page
-    end = min(start + per_page, total)
-    
-    # Заголовок с количеством версий
-    version_title = f"📦 Версии ({total})"
-    if total > per_page:
-        total_pages = (total + per_page - 1) // per_page
-        version_title += f" [стр. {ver_page + 1}/{total_pages}]"
-    
-    kb.inline_keyboard.append([
-        types.InlineKeyboardButton(
-            text=version_title,
-            callback_data="noop"
-        )
-    ])
-    
-    # Кнопки версий (по 2 в ряд)
-    row = []
-    for v in versions[start:end]:
-        mc = v['game_versions'][0] if v.get('game_versions') else "?"
-        loader = v['loaders'][0] if v.get('loaders') else "?"
-        text = f"MC {mc} ({loader})"
-        
-        # Добавляем эмодзи для beta/alpha
-        version_type = v.get('version_type', 'release')
-        if version_type == 'beta':
-            text = f"🔵 {text}"
-        elif version_type == 'alpha':
-            text = f"🟣 {text}"
-        
-        row.append(types.InlineKeyboardButton(
-            text=text[:30],
-            callback_data=f"version:{mod_id}:{v['id']}:{safe_query}:{mod_page}:{ver_page}"
+    # Кнопка просмотра версий
+    if total_versions > 0:
+        action_row.append(types.InlineKeyboardButton(
+            text=f"📦 Версии ({total_versions})",
+            callback_data=f"show_versions:{mod_id}:{safe_query}:{mod_page}"
         ))
-        if len(row) >= 2:
-            kb.inline_keyboard.append(row)
-            row = []
-    if row:
-        kb.inline_keyboard.append(row)
     
-    # Пагинация версий
-    if total > per_page:
-        nav = []
-        if ver_page > 0:
-            nav.append(types.InlineKeyboardButton(
-                text="⬅️ Предыдущие",
-                callback_data=f"ver_page:{mod_id}:{ver_page-1}:{safe_query}:{mod_page}"
-            ))
-        if end < total:
-            nav.append(types.InlineKeyboardButton(
-                text="Следующие ➡️",
-                callback_data=f"ver_page:{mod_id}:{ver_page+1}:{safe_query}:{mod_page}"
-            ))
-        if nav:
-            kb.inline_keyboard.append(nav)
+    kb.inline_keyboard.append(action_row)
     
     # Подписка/отписка
     if is_subscribed:
         kb.inline_keyboard.append([
             types.InlineKeyboardButton(
                 text="❌ Отписаться",
-                callback_data=f"unsub:{mod_id}:{safe_query}:{mod_page}:{ver_page}"
+                callback_data=f"unsub:{mod_id}:{safe_query}:{mod_page}:0"
             )
         ])
     else:
         kb.inline_keyboard.append([
             types.InlineKeyboardButton(
                 text="🔔 Подписаться",
-                callback_data=f"sub:{mod_id}:{safe_query}:{mod_page}:{ver_page}"
+                callback_data=f"sub:{mod_id}:{safe_query}:{mod_page}:0"
             )
         ])
     
-    # Назад к списку
+    # Навигация
     kb.inline_keyboard.append([
         types.InlineKeyboardButton(
             text="⬅️ Назад к списку",
             callback_data=f"back:{safe_query}:{mod_page}"
-        )
-    ])
-    
-    # Ссылка на Modrinth
-    kb.inline_keyboard.append([
+        ),
         types.InlineKeyboardButton(
-            text="🌐 Все версии на Modrinth",
-            url=f"https://modrinth.com/mod/{mod_id}/versions"
+            text="🌐 Modrinth",
+            url=f"https://modrinth.com/mod/{mod_id}"
         )
     ])
     
     return kb
+
+
+def versions_list_keyboard(mod_id: str, versions: list, query: str, mod_page: int, ver_page: int = 0) -> types.InlineKeyboardMarkup:
+    """Клавиатура для списка версий (отдельное меню)"""
+    kb = types.InlineKeyboardMarkup(inline_keyboard=[])
+    safe_query = sanitize(query)
+    
+    total = len(versions)
+    per_page = 8
+    start = ver_page * per_page
+    end = min(start + per_page, total)
+    total_pages = (total + per_page - 1) // per_page
+    
+    # Заголовок с пагинацией
+    title = f"📦 Версии ({total})"
+    if total_pages > 1:
+        title += f" • стр. {ver_page + 1}/{total_pages}"
+    
+    kb.inline_keyboard.append([
+        types.InlineKeyboardButton(
+            text=title,
+            callback_data="noop"
+        )
+    ])
+    
+    # ЛЕГЕНДА — теперь на КАЖДОЙ странице
+    legend = "🟢 Релиз  |  🔵 Бета  |  🟣 Альфа"
+    kb.inline_keyboard.append([
+        types.InlineKeyboardButton(
+            text=legend,
+            callback_data="noop"
+        )
+    ])
+    
+    # Список версий
+    for v in versions[start:end]:
+        version_number = v.get('version_number', '?')
+        version_type = v.get('version_type', 'release')
+        published_at = v.get('published_at')
+        loaders = v.get('loaders', [])
+        
+        # Эмодзи для типа версии
+        if version_type == 'beta':
+            type_emoji = "🔵"
+        elif version_type == 'alpha':
+            type_emoji = "🟣"
+        else:
+            type_emoji = "🟢"
+        
+        # Информация о загрузчиках
+        loader_icons = {"fabric": "🧵", "forge": "⚒️", "quilt": "🪡", "neoforge": "🔧"}
+        loader_emoji = loader_icons.get(loaders[0].lower(), "⚙️") if loaders else "⚙️"
+        
+        # Дата
+        date_str = ""
+        if published_at:
+            if hasattr(published_at, 'strftime'):
+                date_str = f" 📅 {published_at.strftime('%Y-%m-%d')}"
+        
+        # Номер версии (сокращаем если длинный)
+        display_version = version_number[:25] + "..." if len(version_number) > 25 else version_number
+        
+        kb.inline_keyboard.append([
+            types.InlineKeyboardButton(
+                text=f"{type_emoji} {display_version} {loader_emoji}{date_str}",
+                callback_data=f"select_version:{mod_id}:{v['id']}:{safe_query}:{mod_page}:{ver_page}"
+            )
+        ])
+    
+    # Пагинация
+    if total_pages > 1:
+        nav = []
+        if ver_page > 0:
+            nav.append(types.InlineKeyboardButton(
+                text="⬅️ Назад",
+                callback_data=f"versions_page:{mod_id}:{ver_page-1}:{safe_query}:{mod_page}"
+            ))
+        if end < total:
+            nav.append(types.InlineKeyboardButton(
+                text="Вперёд ➡️",
+                callback_data=f"versions_page:{mod_id}:{ver_page+1}:{safe_query}:{mod_page}"
+            ))
+        if nav:
+            kb.inline_keyboard.append(nav)
+    
+    # Кнопка возврата к карточке мода
+    kb.inline_keyboard.append([
+        types.InlineKeyboardButton(
+            text="⬅️ Назад к моду",
+            callback_data=f"back_to_mod:{mod_id}:{safe_query}:{mod_page}"
+        )
+    ])
+    
+    return kb
+
+
+def version_detail_keyboard(mod_id: str, version_id: str, version_number: str, download_url: str, query: str, mod_page: int, ver_page: int) -> types.InlineKeyboardMarkup:
+    """Клавиатура для конкретной версии (с кнопкой скачивания)"""
+    kb = types.InlineKeyboardMarkup(inline_keyboard=[])
+    safe_query = sanitize(query)
+    
+    kb.inline_keyboard.append([
+        types.InlineKeyboardButton(
+            text="📥 Скачать",
+            callback_data=f"download_version:{version_id}"
+        )
+    ])
+    
+    kb.inline_keyboard.append([
+        types.InlineKeyboardButton(
+            text="⬅️ Назад к версиям",
+            callback_data=f"back_to_versions:{mod_id}:{safe_query}:{mod_page}:{ver_page}"
+        ),
+        types.InlineKeyboardButton(
+            text="🌐 Modrinth",
+            url=f"https://modrinth.com/mod/{mod_id}/version/{version_id}"
+        )
+    ])
+    
+    return kb
+
 
 def subscriptions_keyboard(subs: list, page: int = 0, page_size: int = 10) -> types.InlineKeyboardMarkup:
     """Клавиатура списка подписок"""
@@ -178,15 +240,16 @@ def subscriptions_keyboard(subs: list, page: int = 0, page_size: int = 10) -> ty
     start = page * page_size
     end = min(start + page_size, total)
     
-    # Заголовок с информацией о странице
     if total > 0:
         title = f"📋 Ваши подписки ({total})"
         if total > page_size:
             total_pages = (total + page_size - 1) // page_size
-            title += f" [стр. {page + 1}/{total_pages}]"
-        
+            title += f" • стр. {page + 1}/{total_pages}"
         kb.inline_keyboard.append([
-            types.InlineKeyboardButton(text=title, callback_data="noop")
+            types.InlineKeyboardButton(
+                text=title,
+                callback_data="noop"
+            )
         ])
     
     for i in range(start, end):
@@ -210,7 +273,7 @@ def subscriptions_keyboard(subs: list, page: int = 0, page_size: int = 10) -> ty
             ))
         if end < total:
             nav.append(types.InlineKeyboardButton(
-                text="Вперед ➡️",
+                text="Вперёд ➡️",
                 callback_data=f"subs_page:{page+1}"
             ))
         if nav:
