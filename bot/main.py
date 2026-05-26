@@ -235,9 +235,10 @@ async def page_callback(call: types.CallbackQuery):
 @dp.callback_query(F.data.startswith("mod:"))
 async def mod_callback(call: types.CallbackQuery):
     try:
-        _, mod_id, query, page = call.data.split(":", 3)
+        _, mod_id, encoded_query, page = call.data.split(":", 3)
         page = int(page)
-        query = urllib.parse.unquote(query)
+        query = urllib.parse.unquote(encoded_query)
+        logging.info(f"MOD_CALLBACK: запрос '{query}' (закодирован {encoded_query})")
         pool = db.get_pool()
         if pool is None:
             await call.answer("❌ БД не готова")
@@ -268,6 +269,7 @@ async def show_versions_callback(call: types.CallbackQuery):
         _, mod_id, query, mod_page = call.data.split(":", 3)
         mod_page = int(mod_page)
         query = urllib.parse.unquote(query)
+        logging.info(f"show_versions_callback: получен query = '{query}'")
         # показать загрузку
         loading = await call.message.edit_text(
             "📦 <b>Загрузка списка версий...</b>\n\n🔄 Пожалуйста, подождите",
@@ -313,6 +315,7 @@ async def select_version_callback(call: types.CallbackQuery):
         mod_page = int(mod_page)
         ver_page = int(ver_page)
         query = urllib.parse.unquote(query)
+        logging.info(f"select_version_callback: получен query = '{query}'")
         pool = db.get_pool()
         if pool is None:
             await call.answer("❌ БД не готова")
@@ -366,6 +369,7 @@ async def back_to_versions_callback(call: types.CallbackQuery):
         mod_page = int(mod_page)
         ver_page = int(ver_page)
         query = urllib.parse.unquote(query)
+        logging.info(f"back_to_versions_callback: получен query = '{query}'")
         versions = await db.get_mod_versions(mod_id)
         keyboard = kb.versions_list_keyboard(mod_id, versions, query, mod_page, ver_page)
         await call.message.edit_text(
@@ -382,35 +386,32 @@ async def back_to_versions_callback(call: types.CallbackQuery):
 @dp.callback_query(F.data.startswith("back:"))
 async def back_callback(call: types.CallbackQuery):
     try:
-        _, query, page = call.data.split(":", 2)
+        _, encoded_query, page = call.data.split(":", 2)
         page = int(page)
-        query = urllib.parse.unquote(query)
-        if not query:
-            # пустой запрос -> главное меню
+        query = urllib.parse.unquote(encoded_query)
+        logging.info(f"BACK: получен запрос '{query}' (закодирован {encoded_query})")
+        
+        if not query or query == '':
+            # показать главное меню
             keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
                 [types.InlineKeyboardButton(text="📋 Мои подписки", callback_data="mysubs_menu")],
                 [types.InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help_menu")]
             ])
-            await call.message.edit_text(
-                "👋 <b>Главное меню</b>\n\nВыберите действие:",
-                parse_mode="HTML",
-                reply_markup=keyboard
-            )
+            await call.message.edit_text("👋 Главное меню", reply_markup=keyboard)
             await call.answer()
             return
+        
         results = await utils.search_mods_cached(query, 50)
         if not results:
             await call.answer("Ничего не найдено")
             return
+        
         total_pages = (len(results) + 9) // 10
         if page >= total_pages and total_pages > 0:
             page = total_pages - 1
+        
         keyboard = kb.mods_keyboard(results, page, query)
-        await call.message.edit_text(
-            f"🔍 <b>Результаты поиска</b> \"{query}\" ({len(results)}):",
-            parse_mode="HTML",
-            reply_markup=keyboard
-        )
+        await call.message.edit_text(f"🔍 Результаты \"{query}\" ({len(results)}):", parse_mode="HTML", reply_markup=keyboard)
         await call.answer()
     except Exception as e:
         logging.error(f"back_callback: {e}")

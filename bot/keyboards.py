@@ -1,3 +1,4 @@
+import logging
 import math
 import re
 from aiogram import types
@@ -67,8 +68,9 @@ def mod_details_keyboard(mod_id: str, query: str, mod_page: int, is_subscribed: 
     kb = types.InlineKeyboardMarkup(inline_keyboard=[])
     
     import urllib.parse
+    logging.info(f"🔍 mod_details_keyboard: входной query = '{query}'")   # <--- ЭТА СТРОКА
     safe_query = urllib.parse.quote(query, safe='')
-    
+
     # Кнопки действий
     action_row = []
     action_row.append(types.InlineKeyboardButton(
@@ -154,7 +156,9 @@ def version_detail_keyboard_subs(mod_id: str, version_id: str, version_number: s
 def versions_list_keyboard(mod_id: str, versions: list, query: str, mod_page: int, ver_page: int = 0) -> types.InlineKeyboardMarkup:
     """Клавиатура для списка версий (отдельное меню)"""
     kb = types.InlineKeyboardMarkup(inline_keyboard=[])
-    safe_query = sanitize(query)
+    import urllib.parse
+    safe_query = urllib.parse.quote(query, safe='')
+    logging.info(f"versions_list_keyboard: исходный query = '{query}', закодированный = '{safe_query}'")
     
     total = len(versions)
     per_page = 8
@@ -327,7 +331,9 @@ def versions_list_keyboard_subs(mod_id: str, versions: list, subs_page: int, ver
 def version_detail_keyboard(mod_id: str, version_id: str, version_number: str, download_url: str, query: str, mod_page: int, ver_page: int, file_size: int = 0) -> types.InlineKeyboardMarkup:
     """Клавиатура для конкретной версии"""
     kb = types.InlineKeyboardMarkup(inline_keyboard=[])
-    safe_query = sanitize(query)
+    import urllib.parse
+    safe_query = urllib.parse.quote(query, safe='')
+    logging.info(f"version_detail_keyboard: исходный query = '{query}', закодированный = '{safe_query}'")
     
     MAX_SIZE = 50 * 1024 * 1024
     
@@ -360,6 +366,10 @@ def version_detail_keyboard(mod_id: str, version_id: str, version_number: str, d
     ])
     
     return kb
+
+def new_func(query):
+    safe_query = sanitize(query)
+    return safe_query
 
 
 def subscriptions_keyboard(subs: list, page: int = 0, page_size: int = 10) -> types.InlineKeyboardMarkup:
