@@ -17,7 +17,10 @@ def mods_keyboard(mods: list, page: int, query: str, page_size: int = 10) -> typ
     total = len(mods)
     start = page * page_size
     end = min(start + page_size, total)
-    safe_query = sanitize(query)
+    
+    # Кодируем query для безопасной передачи
+    import urllib.parse
+    safe_query = urllib.parse.quote(query, safe='')
     
     for i in range(start, end):
         m = mods[i]
@@ -26,6 +29,7 @@ def mods_keyboard(mods: list, page: int, query: str, page_size: int = 10) -> typ
         if m.get('is_alias_match', False):
             title = "⭐ " + title
         
+        # ПЕРЕДАЁМ QUERY
         kb.inline_keyboard.append([
             types.InlineKeyboardButton(
                 text=f"{title} ({m['downloads']:,})",
@@ -58,27 +62,24 @@ def mods_keyboard(mods: list, page: int, query: str, page_size: int = 10) -> typ
     return kb
 
 
-def mod_details_keyboard(mod_id: str, query: str, mod_page: int, is_subscribed: bool = False, total_versions: int = 0) -> types.InlineKeyboardMarkup:
-    """Клавиатура для карточки мода (без версий)"""
+def mod_details_keyboard(mod_id: str, query: str, mod_page: int, is_subscribed: bool = False, total_versions: int = 0, source: str = "search") -> types.InlineKeyboardMarkup:
+    """Клавиатура для карточки мода"""
     kb = types.InlineKeyboardMarkup(inline_keyboard=[])
-    safe_query = sanitize(query)
+    
+    import urllib.parse
+    safe_query = urllib.parse.quote(query, safe='')
     
     # Кнопки действий
     action_row = []
-    
-    # Кнопка скачивания последней версии
     action_row.append(types.InlineKeyboardButton(
         text="📥 Скачать",
         callback_data=f"download_latest:{mod_id}"
     ))
-    
-    # Кнопка просмотра версий
     if total_versions > 0:
         action_row.append(types.InlineKeyboardButton(
             text=f"📦 Версии ({total_versions})",
             callback_data=f"show_versions:{mod_id}:{safe_query}:{mod_page}"
         ))
-    
     kb.inline_keyboard.append(action_row)
     
     # Подписка/отписка
@@ -86,26 +87,64 @@ def mod_details_keyboard(mod_id: str, query: str, mod_page: int, is_subscribed: 
         kb.inline_keyboard.append([
             types.InlineKeyboardButton(
                 text="❌ Отписаться",
-                callback_data=f"unsub:{mod_id}:{safe_query}:{mod_page}:0"
+                callback_data=f"unsubscribe:{mod_id}:{safe_query}:{mod_page}:0"
             )
         ])
     else:
         kb.inline_keyboard.append([
             types.InlineKeyboardButton(
                 text="🔔 Подписаться",
-                callback_data=f"sub:{mod_id}:{safe_query}:{mod_page}:0"
+                callback_data=f"subscribe:{mod_id}:{safe_query}:{mod_page}:0"
             )
         ])
     
     # Навигация
+    if source == "subs":
+        kb.inline_keyboard.append([
+            types.InlineKeyboardButton(
+                text="⬅️ Назад к подпискам",
+                callback_data=f"back_to_subs:{mod_page}"
+            ),
+            types.InlineKeyboardButton(
+                text="🌐 Modrinth",
+                url=f"https://modrinth.com/mod/{mod_id}"
+            )
+        ])
+    else:
+        kb.inline_keyboard.append([
+            types.InlineKeyboardButton(
+                text="⬅️ Назад к списку",
+                callback_data=f"back:{safe_query}:{mod_page}"
+            ),
+            types.InlineKeyboardButton(
+                text="🌐 Modrinth",
+                url=f"https://modrinth.com/mod/{mod_id}"
+            )
+        ])
+    
+    return kb
+
+def version_detail_keyboard_subs(mod_id: str, version_id: str, version_number: str, download_url: str, subs_page: int, ver_page: int) -> types.InlineKeyboardMarkup:
+    """Клавиатура для конкретной версии (из подписок)"""
+    kb = types.InlineKeyboardMarkup(inline_keyboard=[])
+    
+    MAX_SIZE = 50 * 1024 * 1024
+    
     kb.inline_keyboard.append([
         types.InlineKeyboardButton(
-            text="⬅️ Назад к списку",
-            callback_data=f"back:{safe_query}:{mod_page}"
+            text="📥 Скачать",
+            callback_data=f"download_version:{version_id}"
+        )
+    ])
+    
+    kb.inline_keyboard.append([
+        types.InlineKeyboardButton(
+            text="⬅️ Назад к версиям",
+            callback_data=f"back_to_versions_subs:{mod_id}:{subs_page}:{ver_page}"
         ),
         types.InlineKeyboardButton(
             text="🌐 Modrinth",
-            url=f"https://modrinth.com/mod/{mod_id}"
+            url=f"https://modrinth.com/mod/{mod_id}/version/{version_id}"
         )
     ])
     
@@ -205,18 +244,109 @@ def versions_list_keyboard(mod_id: str, versions: list, query: str, mod_page: in
     
     return kb
 
+def versions_list_keyboard_subs(mod_id: str, versions: list, subs_page: int, ver_page: int = 0) -> types.InlineKeyboardMarkup:
+    """Клавиатура для списка версий (из подписок)"""
+    kb = types.InlineKeyboardMarkup(inline_keyboard=[])
+    
+    total = len(versions)
+    per_page = 8
+    start = ver_page * per_page
+    end = min(start + per_page, total)
+    total_pages = (total + per_page - 1) // per_page
+    
+    # Заголовок с пагинацией
+    title = f"📦 Версии ({total})"
+    if total_pages > 1:
+        title += f" • стр. {ver_page + 1}/{total_pages}"
+    
+    kb.inline_keyboard.append([
+        types.InlineKeyboardButton(text=title, callback_data="noop")
+    ])
+    
+    # Легенда
+    legend = "🟢 Релиз  |  🔵 Бета  |  🟣 Альфа"
+    kb.inline_keyboard.append([
+        types.InlineKeyboardButton(text=legend, callback_data="noop")
+    ])
+    
+    # Список версий
+    for v in versions[start:end]:
+        version_number = v.get('version_number', '?')
+        version_type = v.get('version_type', 'release')
+        published_at = v.get('published_at')
+        loaders = v.get('loaders', [])
+        
+        if version_type == 'beta':
+            type_emoji = "🔵"
+        elif version_type == 'alpha':
+            type_emoji = "🟣"
+        else:
+            type_emoji = "🟢"
+        
+        loader_icons = {"fabric": "🧵", "forge": "⚒️", "quilt": "🪡", "neoforge": "🔧"}
+        loader_emoji = loader_icons.get(loaders[0].lower(), "⚙️") if loaders else "⚙️"
+        
+        date_str = ""
+        if published_at:
+            if hasattr(published_at, 'strftime'):
+                date_str = f" 📅 {published_at.strftime('%Y-%m-%d')}"
+        
+        kb.inline_keyboard.append([
+            types.InlineKeyboardButton(
+                text=f"{type_emoji} {version_number} {loader_emoji}{date_str}",
+                callback_data=f"select_version_subs:{mod_id}:{v['id']}:{subs_page}:{ver_page}"
+            )
+        ])
+    
+    # Пагинация
+    if total_pages > 1:
+        nav = []
+        if ver_page > 0:
+            nav.append(types.InlineKeyboardButton(
+                text="⬅️ Назад",
+                callback_data=f"versions_page_subs:{mod_id}:{ver_page-1}:{subs_page}"
+            ))
+        if end < total:
+            nav.append(types.InlineKeyboardButton(
+                text="Вперёд ➡️",
+                callback_data=f"versions_page_subs:{mod_id}:{ver_page+1}:{subs_page}"
+            ))
+        if nav:
+            kb.inline_keyboard.append(nav)
+    
+    # Кнопка возврата к карточке мода (в подписки)
+    kb.inline_keyboard.append([
+        types.InlineKeyboardButton(
+            text="⬅️ Назад к моду",
+            callback_data=f"back_to_mod_subs:{mod_id}:{subs_page}"
+        )
+    ])
+    
+    return kb
 
-def version_detail_keyboard(mod_id: str, version_id: str, version_number: str, download_url: str, query: str, mod_page: int, ver_page: int) -> types.InlineKeyboardMarkup:
-    """Клавиатура для конкретной версии (с кнопкой скачивания)"""
+def version_detail_keyboard(mod_id: str, version_id: str, version_number: str, download_url: str, query: str, mod_page: int, ver_page: int, file_size: int = 0) -> types.InlineKeyboardMarkup:
+    """Клавиатура для конкретной версии"""
     kb = types.InlineKeyboardMarkup(inline_keyboard=[])
     safe_query = sanitize(query)
     
-    kb.inline_keyboard.append([
-        types.InlineKeyboardButton(
-            text="📥 Скачать",
-            callback_data=f"download_version:{version_id}"
-        )
-    ])
+    MAX_SIZE = 50 * 1024 * 1024
+    
+    if file_size > MAX_SIZE:
+        # Если файл больше 50 МБ, показываем только ссылку на Modrinth
+        kb.inline_keyboard.append([
+            types.InlineKeyboardButton(
+                text="🌐 Скачать с Modrinth",
+                url=download_url
+            )
+        ])
+    else:
+        # Если файл меньше 50 МБ, показываем кнопку скачивания через бота
+        kb.inline_keyboard.append([
+            types.InlineKeyboardButton(
+                text="📥 Скачать",
+                callback_data=f"download_version:{version_id}"
+            )
+        ])
     
     kb.inline_keyboard.append([
         types.InlineKeyboardButton(
